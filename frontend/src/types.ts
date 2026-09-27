@@ -16,7 +16,14 @@ export interface InvoiceItem {
   description: string
   quantity: string
   unit_price: string
+  tax_rate: string
   amount?: string
+}
+
+export interface TaxLine {
+  rate: string
+  base: string
+  amount: string
 }
 
 export interface Invoice {
@@ -28,20 +35,24 @@ export interface Invoice {
   status: InvoiceStatus
   is_overdue: boolean
   tax_rate: string
+  withholding_rate: string
   notes: string | null
   items: InvoiceItem[]
   subtotal: string
+  tax_breakdown: TaxLine[]
   tax_amount: string
+  withholding_amount: string
   total: string
 }
 
-export type InvoiceSummary = Omit<Invoice, 'items' | 'notes'>
+export type InvoiceSummary = Omit<Invoice, 'items' | 'notes' | 'tax_breakdown'>
 
 export interface InvoiceInput {
   client_id: number
   issue_date: string
   due_date: string | null
   tax_rate: string
+  withholding_rate: string
   notes: string | null
   items: InvoiceItem[]
 }

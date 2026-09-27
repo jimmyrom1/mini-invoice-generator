@@ -3,7 +3,7 @@
 [![CI](https://github.com/jimmyrom1/mini-invoice-generator/actions/workflows/ci.yml/badge.svg)](https://github.com/jimmyrom1/mini-invoice-generator/actions/workflows/ci.yml)
 
 Generador de facturas pequeño pero completo: gestión de clientes, facturas con varias líneas,
-cálculo de IVA, ciclo de vida de la factura (borrador → emitida → pagada / anulada),
+IVA por línea con desglose por tipos, retención de IRPF, ciclo de vida de la factura (borrador → emitida → pagada / anulada),
 panel con importes cobrados y pendientes, y exportación a PDF.
 
 ![Panel de facturas](docs/panel.png)
@@ -38,9 +38,20 @@ automáticamente.
 
 Estas son las partes en las que merece la pena fijarse:
 
-- **Dinero con `Decimal`, nunca `float`.** Las columnas son `NUMERIC`, los importes se redondean
-  *half-up* a céntimos línea a línea y el IVA se redondea aparte, como en una factura real.
-  En JSON viajan como string (`"629.19"`) para no perder precisión.
+- **Dinero con `Decimal`, nunca `float`.** Las columnas son `NUMERIC` y los importes se redondean
+  *half-up* a céntimos. En JSON viajan como string (`"629.19"`) para no perder precisión.
+- **IVA por línea y retención de IRPF, como exige una factura española.** Cada línea lleva su
+  tipo (21 %, 10 %, 4 % o 0 %) y la factura muestra el desglose de base y cuota por tipo. El
+  total es `base + IVA − IRPF`: la retención (15 %, o 7 % en los primeros años de actividad) la
+  ingresa el cliente en Hacienda.
+  - La cuota se redondea **una vez por tipo, sobre la base agrupada**, y no línea a línea. Con
+    cinco líneas de 0,10 € al 21 %, redondeando cada línea saldrían 0,10 €, pero lo correcto es
+    0,50 × 21 % = 0,105 → 0,11 €, lo que cuadra con el desglose impreso. Hay un test de este caso.
+  - El mismo cálculo existe en tres sitios: el modelo, la consulta SQL del panel y la vista previa
+    del navegador. Los tests usan los mismos números en los tres para que no se desincronicen.
+  - La migración copia el IVA de cada factura a sus líneas, así que las facturas ya emitidas no
+    cambian ni un céntimo (se comprobó migrando una base con datos). La API antigua sigue
+    funcionando: si una línea no indica su IVA, hereda el de la factura.
 - **Numeración correlativa sin condiciones de carrera.** Cada año tiene su contador
   (`INV-2026-0001`, …). Se incrementa con un único
   `INSERT … ON CONFLICT DO UPDATE … RETURNING`, que es atómico en PostgreSQL. Hay un test que
@@ -50,7 +61,7 @@ Estas son las partes en las que merece la pena fijarse:
   (`ALLOWED_TRANSITIONS` en [`models.py`](backend/app/models.py)). Solo los borradores se
   pueden editar o borrar; una factura emitida solo puede pagarse o anularse.
 - **Integridad también en la base de datos.** Además de validar en la API hay `CHECK`
-  constraints (cantidad > 0, IVA entre 0 y 100, vencimiento ≥ emisión), claves foráneas con
+  constraints (cantidad > 0, IVA e IRPF entre 0 y 100, vencimiento ≥ emisión), claves foráneas con
   `ON DELETE RESTRICT` y un tipo `ENUM` nativo para el estado.
 - **Estadísticas calculadas en SQL.** El panel agrega los totales por estado con una consulta
   (subconsulta + `GROUP BY`), sin cargar las facturas en memoria. Un test verifica que el
@@ -115,7 +126,7 @@ npm run dev
 ## Tests
 
 ```bash
-cd backend  && pytest --cov=app      # 26 tests contra PostgreSQL real
+cd backend  && pytest --cov=app      # 35 tests contra PostgreSQL real
 cd frontend && npm test              # Vitest + Testing Library
 ```
 
@@ -152,7 +163,6 @@ docker-compose.yml
 - Autenticación y varios emisores (multi-tenant).
 - Envío de la factura por email.
 - Facturas rectificativas en lugar de anular.
-- Tipos de IVA distintos por línea y retención de IRPF.
 
 ## Licencia
 

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { ApiError, api } from '../api'
 import { ItemsEditor } from '../components/ItemsEditor'
-import { emptyItem } from '../constants'
+import { WITHHOLDING_RATES, emptyItem } from '../constants'
 import { computeTotals, formatCents } from '../money'
 import type { Client, InvoiceInput, InvoiceItem } from '../types'
 
@@ -21,7 +21,7 @@ export function InvoiceForm() {
   const [clientId, setClientId] = useState('')
   const [issueDate, setIssueDate] = useState(today())
   const [dueDate, setDueDate] = useState('')
-  const [taxRate, setTaxRate] = useState('21')
+  const [withholdingRate, setWithholdingRate] = useState('0')
   const [notes, setNotes] = useState('')
   const [items, setItems] = useState<InvoiceItem[]>([emptyItem()])
   const [error, setError] = useState<string | null>(null)
@@ -44,20 +44,21 @@ export function InvoiceForm() {
         setClientId(String(inv.client.id))
         setIssueDate(inv.issue_date)
         setDueDate(inv.due_date)
-        setTaxRate(toInput(inv.tax_rate))
+        setWithholdingRate(toInput(inv.withholding_rate))
         setNotes(inv.notes ?? '')
         setItems(
-          inv.items.map(({ description, quantity, unit_price }) => ({
+          inv.items.map(({ description, quantity, unit_price, tax_rate }) => ({
             description,
             quantity: toInput(quantity),
             unit_price: unit_price.replace('.', ','),
+            tax_rate: toInput(tax_rate),
           })),
         )
       })
       .catch((e: Error) => setError(e.message))
   }, [editing, id, navigate])
 
-  const totals = useMemo(() => computeTotals(items, taxRate), [items, taxRate])
+  const totals = useMemo(() => computeTotals(items, withholdingRate), [items, withholdingRate])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -68,12 +69,15 @@ export function InvoiceForm() {
       client_id: Number(clientId),
       issue_date: issueDate,
       due_date: dueDate || null,
-      tax_rate: normalize(taxRate),
+      // El IVA va en cada línea; el de la factura solo es el valor por defecto de la API.
+      tax_rate: '21',
+      withholding_rate: normalize(withholdingRate),
       notes: notes.trim() || null,
       items: items.map((item) => ({
         description: item.description.trim(),
         quantity: normalize(item.quantity),
         unit_price: normalize(item.unit_price),
+        tax_rate: normalize(item.tax_rate),
       })),
     }
     try {
@@ -138,9 +142,16 @@ export function InvoiceForm() {
           {fieldError('due_date')}
         </label>
         <label>
-          IVA (%)
-          <input inputMode="decimal" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
-          {fieldError('tax_rate')}
+          Retención IRPF
+          <select value={withholdingRate} onChange={(e) => setWithholdingRate(e.target.value)}>
+            {WITHHOLDING_RATES.map((rate) => (
+              <option key={rate} value={rate}>
+                {rate === '0' ? 'Sin retención' : `${rate} %`}
+              </option>
+            ))}
+          </select>
+          <span className="hint">Autónomos: 15 % (7 % los primeros años).</span>
+          {fieldError('withholding_rate')}
         </label>
       </section>
 
@@ -156,8 +167,21 @@ export function InvoiceForm() {
         <dl className="totals">
           <dt>Base imponible</dt>
           <dd>{formatCents(totals.subtotal)}</dd>
-          <dt>IVA</dt>
-          <dd>{formatCents(totals.tax)}</dd>
+          {totals.breakdown.map((line) => (
+            <Fragment key={line.rate}>
+              <dt>
+                IVA {line.rate.toLocaleString('es-ES')} %
+                {totals.breakdown.length > 1 && <span className="muted"> s/ {formatCents(line.base)}</span>}
+              </dt>
+              <dd>{formatCents(line.amount)}</dd>
+            </Fragment>
+          ))}
+          {totals.withholding > 0 && (
+            <>
+              <dt>Retención IRPF {withholdingRate} %</dt>
+              <dd>−{formatCents(totals.withholding)}</dd>
+            </>
+          )}
           <dt className="grand">Total</dt>
           <dd className="grand">{formatCents(totals.total)}</dd>
         </dl>

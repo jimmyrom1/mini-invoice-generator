@@ -27,10 +27,13 @@ def register_cli(app: Flask) -> None:
 
         today = date.today()
         samples = [
+            # Cada muestra: cliente, emisión, estado, % de IRPF y líneas (concepto, cantidad,
+            # precio y, opcionalmente, % de IVA si no es el 21 %).
             (
                 acme,
                 today - timedelta(days=45),
                 InvoiceStatus.PAID,
+                "15",
                 [
                     ("Desarrollo API REST", "24", "45.00"),
                     ("Despliegue y configuración", "1", "300.00"),
@@ -40,17 +43,25 @@ def register_cli(app: Flask) -> None:
                 luna,
                 today - timedelta(days=40),
                 InvoiceStatus.SENT,
+                "0",
                 [("Diseño de landing page", "1", "850.00")],
             ),
             (
                 acme,
                 today - timedelta(days=5),
                 InvoiceStatus.SENT,
+                "15",
                 [("Mantenimiento mensual", "1", "250.00"), ("Horas de soporte", "3.5", "40.00")],
             ),
-            (luna, today, InvoiceStatus.DRAFT, [("Sesión de fotos producto", "2", "180.00")]),
+            (
+                luna,
+                today,
+                InvoiceStatus.DRAFT,
+                "0",
+                [("Sesión de fotos producto", "2", "180.00"), ("Álbum impreso", "1", "60.00", "4")],
+            ),
         ]
-        for client, issued, status, lines in samples:
+        for client, issued, status, withholding, lines in samples:
             db.session.add(
                 Invoice(
                     number=InvoiceCounter.next_number(issued.year),
@@ -59,14 +70,16 @@ def register_cli(app: Flask) -> None:
                     due_date=issued + timedelta(days=30),
                     status=status,
                     tax_rate=Decimal("21"),
+                    withholding_rate=Decimal(withholding),
                     items=[
                         InvoiceItem(
                             position=i,
-                            description=desc,
-                            quantity=Decimal(q),
-                            unit_price=Decimal(price),
+                            description=line[0],
+                            quantity=Decimal(line[1]),
+                            unit_price=Decimal(line[2]),
+                            tax_rate=Decimal(line[3] if len(line) > 3 else "21"),
                         )
-                        for i, (desc, q, price) in enumerate(lines)
+                        for i, line in enumerate(lines)
                     ],
                 )
             )

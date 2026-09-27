@@ -27,6 +27,13 @@ class InvoiceItemSchema(Schema):
         required=True, as_string=True, validate=validate.Range(min=Decimal("0.001"))
     )
     unit_price = money_field(required=True, validate=validate.Range(min=Decimal("0")))
+    # Opcional: si falta, se usa el tax_rate de la factura (así la API antigua sigue valiendo).
+    tax_rate = fields.Decimal(
+        as_string=True,
+        places=2,
+        load_default=None,
+        validate=validate.Range(min=Decimal("0"), max=Decimal("100")),
+    )
     amount = money_field(dump_only=True)
 
 
@@ -38,10 +45,21 @@ class InvoiceInputSchema(Schema):
         load_default=Decimal("21"),
         validate=validate.Range(min=Decimal("0"), max=Decimal("100")),
     )
+    withholding_rate = fields.Decimal(
+        load_default=Decimal("0"),
+        validate=validate.Range(min=Decimal("0"), max=Decimal("100")),
+    )
     notes = fields.Str(allow_none=True, load_default=None)
     items = fields.List(
         fields.Nested(InvoiceItemSchema), required=True, validate=validate.Length(min=1)
     )
+
+    @post_load
+    def default_line_tax_rate(self, data, **kwargs):
+        for item in data["items"]:
+            if item.get("tax_rate") is None:
+                item["tax_rate"] = data["tax_rate"]
+        return data
 
     @post_load
     def default_due_date(self, data, **kwargs):
@@ -58,6 +76,12 @@ class StatusSchema(Schema):
     status = fields.Enum(InvoiceStatus, by_value=True, required=True)
 
 
+class TaxLineSchema(Schema):
+    rate = fields.Decimal(as_string=True, places=2)
+    base = money_field()
+    amount = money_field()
+
+
 class InvoiceSchema(Schema):
     id = fields.Int()
     number = fields.Str()
@@ -67,10 +91,13 @@ class InvoiceSchema(Schema):
     status = fields.Enum(InvoiceStatus, by_value=True)
     is_overdue = fields.Bool()
     tax_rate = fields.Decimal(as_string=True, places=2)
+    withholding_rate = fields.Decimal(as_string=True, places=2)
     notes = fields.Str(allow_none=True)
     items = fields.List(fields.Nested(InvoiceItemSchema))
     subtotal = money_field()
+    tax_breakdown = fields.List(fields.Nested(TaxLineSchema))
     tax_amount = money_field()
+    withholding_amount = money_field()
     total = money_field()
     created_at = fields.DateTime()
     updated_at = fields.DateTime()
@@ -78,4 +105,4 @@ class InvoiceSchema(Schema):
 
 class InvoiceSummarySchema(InvoiceSchema):
     class Meta:
-        exclude = ("items", "notes", "created_at", "updated_at")
+        exclude = ("items", "notes", "tax_breakdown", "created_at", "updated_at")

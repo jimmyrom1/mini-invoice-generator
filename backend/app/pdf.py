@@ -63,12 +63,12 @@ def render_invoice_pdf(invoice: Invoice, company: dict) -> bytes:
 
     # Tabla de conceptos
     pdf.ln(6)
-    widths = (95, 25, 35, 35)
-    headers = ("Concepto", "Cantidad", "Precio unit.", "Importe")
+    widths = (85, 22, 33, 17, 33)
+    headers = ("Concepto", "Cantidad", "Precio unit.", "IVA", "Importe")
     pdf.set_fill_color(35, 48, 68)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 10)
-    for width, header, align in zip(widths, headers, "LRRR", strict=True):
+    for width, header, align in zip(widths, headers, "LRRRR", strict=True):
         pdf.cell(width, 8, header, fill=True, align=align)
     pdf.ln()
 
@@ -76,25 +76,31 @@ def render_invoice_pdf(invoice: Invoice, company: dict) -> bytes:
     pdf.set_font("Helvetica", "", 10)
     for i, item in enumerate(invoice.items):
         pdf.set_fill_color(*((244, 246, 249) if i % 2 else (255, 255, 255)))
-        pdf.cell(widths[0], 7, item.description[:60], fill=True)
+        pdf.cell(widths[0], 7, item.description[:55], fill=True)
         pdf.cell(widths[1], 7, qty(item.quantity), fill=True, align="R")
         pdf.cell(widths[2], 7, eur(item.unit_price), fill=True, align="R")
-        pdf.cell(widths[3], 7, eur(item.amount), fill=True, align="R")
+        pdf.cell(widths[3], 7, f"{qty(item.tax_rate)} %", fill=True, align="R")
+        pdf.cell(widths[4], 7, eur(item.amount), fill=True, align="R")
         pdf.ln()
 
     # Totales
     pdf.ln(4)
-    rows = (
-        ("Base imponible", eur(invoice.subtotal)),
-        (f"IVA ({qty(invoice.tax_rate)} %)", eur(invoice.tax_amount)),
-    )
+    rows = [("Base imponible", eur(invoice.subtotal))]
+    # Desglose por tipo, obligatorio cuando una factura mezcla tipos de IVA.
+    rows += [
+        (f"IVA {qty(line.rate)} % s/ {eur(line.base)}", eur(line.amount))
+        for line in invoice.tax_breakdown
+    ]
+    if invoice.withholding_rate:
+        label = f"Retención IRPF {qty(invoice.withholding_rate)} %"
+        rows.append((label, f"-{eur(invoice.withholding_amount)}"))
     for label, value in rows:
-        pdf.set_x(130)
-        pdf.cell(35, 7, label)
+        pdf.set_x(100)
+        pdf.cell(65, 7, label)
         pdf.cell(35, 7, value, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-    pdf.set_x(130)
+    pdf.set_x(100)
     pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(35, 9, "TOTAL", border="T")
+    pdf.cell(65, 9, "TOTAL", border="T")
     pdf.cell(35, 9, eur(invoice.total), border="T", align="R")
 
     if invoice.notes:

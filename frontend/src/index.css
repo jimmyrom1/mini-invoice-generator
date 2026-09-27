@@ -572,3 +572,15 @@ button:focus-visible,
     width: auto;
   }
 }
+
+/* Base sobre la que se calcula cada tipo de IVA en el desglose. */
+.totals .muted {
+  color: var(--muted);
+  font-size: 0.85em;
+  font-weight: normal;
+}
+
+/* Selector de IVA por línea: ancho suficiente para "21 %" más la flecha. */
+.items-editor select {
+  min-width: 5.5rem;
+}

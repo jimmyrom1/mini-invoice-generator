@@ -39,4 +39,23 @@ describe('ItemsEditor', () => {
     await user.click(screen.getByLabelText('Quitar línea 2'))
     expect(screen.queryByLabelText('Concepto línea 2')).not.toBeInTheDocument()
   })
+
+  it('each line has its own VAT rate, 21 % by default', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: '+ Añadir línea' }))
+
+    const vat2 = screen.getByLabelText('IVA línea 2') as HTMLSelectElement
+    await user.selectOptions(vat2, '4')
+
+    expect((screen.getByLabelText('IVA línea 1') as HTMLSelectElement).value).toBe('21')
+    expect(vat2.value).toBe('4')
+    expect(Array.from(vat2.options).map((o) => o.value)).toEqual(['21', '10', '4', '0'])
+  })
+
+  it('keeps an old rate that is no longer offered', () => {
+    const items = [{ description: 'Antiguo', quantity: '1', unit_price: '10', tax_rate: '7,5' }]
+    render(<ItemsEditor items={items} onChange={() => {}} />)
+    expect((screen.getByLabelText('IVA línea 1') as HTMLSelectElement).value).toBe('7,5')
+  })
 })

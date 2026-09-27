@@ -167,3 +167,92 @@ def test_missing_invoice_returns_json_404(client):
 
 def test_health(client):
     assert client.get("/api/health").get_json() == {"status": "ok"}
+
+
+def test_lines_inherit_the_invoice_tax_rate(make_invoice):
+    invoice = make_invoice()
+    assert [i["tax_rate"] for i in invoice["items"]] == ["21.00", "21.00"]
+    assert invoice["tax_breakdown"] == [{"rate": "21.00", "base": "519.99", "amount": "109.20"}]
+    assert invoice["withholding_rate"] == "0.00"
+    assert invoice["withholding_amount"] == "0.00"
+
+
+def test_mixed_vat_rates_are_broken_down_and_rounded_per_rate(make_invoice):
+    invoice = make_invoice(
+        items=[
+            {"description": "Diseño", "quantity": "1", "unit_price": "100.05", "tax_rate": "21"},
+            {"description": "Diseño 2", "quantity": "1", "unit_price": "100.05", "tax_rate": "21"},
+            {"description": "Libro", "quantity": "3", "unit_price": "12.35", "tax_rate": "4"},
+            {"description": "Formación", "quantity": "1", "unit_price": "80.00", "tax_rate": "0"},
+        ]
+    )
+    # 21 %: base 200,10 → 42,021 → 42,02
+    #  4 %: base 37,05 → 1,482 → 1,48
+    #  0 %: base 80,00 → 0,00
+    assert invoice["tax_breakdown"] == [
+        {"rate": "21.00", "base": "200.10", "amount": "42.02"},
+        {"rate": "4.00", "base": "37.05", "amount": "1.48"},
+        {"rate": "0.00", "base": "80.00", "amount": "0.00"},
+    ]
+    assert invoice["subtotal"] == "317.15"
+    assert invoice["tax_amount"] == "43.50"
+    assert invoice["total"] == "360.65"
+
+
+def test_grouping_by_rate_differs_from_rounding_each_line(make_invoice):
+    # Cinco líneas de 0,10 € al 21 %. Redondeando cada línea: 5 × 0,02 = 0,10 €.
+    # Sobre la base agrupada: 0,50 × 21 % = 0,105 → 0,11 €, que es lo que debe figurar.
+    # Si se redondeara línea a línea, la cuota no cuadraría con "base × tipo" del desglose.
+    invoice = make_invoice(
+        items=[{"description": f"x{i}", "quantity": "1", "unit_price": "0.10"} for i in range(5)]
+    )
+    assert invoice["tax_amount"] == "0.11"
+
+
+def test_withholding_is_subtracted_from_the_total(make_invoice):
+    invoice = make_invoice(withholding_rate="15")
+    # 519,99 + 109,20 − 15 % de 519,99 (77,9985 → 78,00) = 551,19
+    assert invoice["withholding_amount"] == "78.00"
+    assert invoice["total"] == "551.19"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"withholding_rate": "-1"},
+        {"withholding_rate": "101"},
+        {"items": [{"description": "x", "quantity": "1", "unit_price": "1", "tax_rate": "150"}]},
+    ],
+)
+def test_invalid_rates_are_rejected(client, customer, override):
+    payload = {
+        "client_id": customer["id"],
+        "items": [{"description": "x", "quantity": "1", "unit_price": "1"}],
+    }
+    payload.update(override)
+    assert client.post("/api/invoices", json=payload).status_code == 422
+
+
+def test_stats_include_mixed_rates_and_withholding(client, make_invoice):
+    invoice = make_invoice(
+        withholding_rate="15",
+        items=[
+            {"description": "Diseño", "quantity": "1", "unit_price": "100.05", "tax_rate": "21"},
+            {"description": "Libro", "quantity": "3", "unit_price": "12.35", "tax_rate": "4"},
+        ],
+    )
+    stats = client.get("/api/invoices/stats").get_json()
+    assert stats["by_status"]["draft"] == {"count": 1, "total": invoice["total"]}
+
+
+def test_pdf_with_breakdown_and_withholding(client, make_invoice):
+    invoice = make_invoice(
+        withholding_rate="7",
+        items=[
+            {"description": "Diseño", "quantity": "1", "unit_price": "500", "tax_rate": "21"},
+            {"description": "Libro", "quantity": "1", "unit_price": "20", "tax_rate": "4"},
+        ],
+    )
+    res = client.get(f"/api/invoices/{invoice['id']}/pdf")
+    assert res.status_code == 200
+    assert res.data.startswith(b"%PDF")

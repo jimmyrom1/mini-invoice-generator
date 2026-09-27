@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import enum
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -15,6 +17,15 @@ CENT = Decimal("0.01")
 
 def money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+@dataclass(frozen=True)
+class TaxLine:
+    """Una fila del desglose de IVA: base y cuota de un mismo tipo."""
+
+    rate: Decimal
+    base: Decimal
+    amount: Decimal
 
 
 class InvoiceStatus(enum.StrEnum):
@@ -76,6 +87,9 @@ class Invoice(db.Model):
     __table_args__ = (
         CheckConstraint("tax_rate >= 0 AND tax_rate <= 100", name="ck_invoices_tax_rate"),
         CheckConstraint("due_date >= issue_date", name="ck_invoices_due_after_issue"),
+        CheckConstraint(
+            "withholding_rate >= 0 AND withholding_rate <= 100", name="ck_invoices_withholding_rate"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -94,7 +108,12 @@ class Invoice(db.Model):
         default=InvoiceStatus.DRAFT,
         index=True,
     )
+    # IVA por defecto para las líneas que no indican el suyo.
     tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("21.00"))
+    # Retención de IRPF (15 % general, 7 % el primer año de actividad): se resta del total.
+    withholding_rate: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), default=Decimal("0"), server_default="0"
+    )
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
@@ -111,12 +130,32 @@ class Invoice(db.Model):
         return money(sum((item.amount for item in self.items), Decimal("0")))
 
     @property
+    def tax_breakdown(self) -> list[TaxLine]:
+        """Base y cuota por tipo de IVA, de mayor a menor tipo.
+
+        La cuota se redondea por tipo sobre la base agrupada, como aparece en la factura: no se
+        suman cuotas redondeadas línea a línea, que podrían desviarse algún céntimo.
+        """
+        bases: dict[Decimal, Decimal] = defaultdict(Decimal)
+        for item in self.items:
+            bases[item.tax_rate] += item.amount
+        return [
+            TaxLine(rate=rate, base=money(base), amount=money(base * rate / Decimal(100)))
+            for rate, base in sorted(bases.items(), reverse=True)
+        ]
+
+    @property
     def tax_amount(self) -> Decimal:
-        return money(self.subtotal * self.tax_rate / Decimal(100))
+        return sum((line.amount for line in self.tax_breakdown), Decimal("0.00"))
+
+    @property
+    def withholding_amount(self) -> Decimal:
+        return money(self.subtotal * self.withholding_rate / Decimal(100))
 
     @property
     def total(self) -> Decimal:
-        return self.subtotal + self.tax_amount
+        """Lo que paga el cliente: base + IVA − retención (que ingresa él en Hacienda)."""
+        return self.subtotal + self.tax_amount - self.withholding_amount
 
     @property
     def is_overdue(self) -> bool:
@@ -131,6 +170,7 @@ class InvoiceItem(db.Model):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_invoice_items_quantity_positive"),
         CheckConstraint("unit_price >= 0", name="ck_invoice_items_price_non_negative"),
+        CheckConstraint("tax_rate >= 0 AND tax_rate <= 100", name="ck_invoice_items_tax_rate"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -141,6 +181,8 @@ class InvoiceItem(db.Model):
     description: Mapped[str] = mapped_column(String(500))
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3))
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    # En España conviven el 21 % general, el 10 % reducido, el 4 % superreducido y el 0 %.
+    tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2))
 
     invoice: Mapped[Invoice] = relationship(back_populates="items")
 

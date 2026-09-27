@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { api } from '../api'
@@ -120,6 +120,7 @@ export function InvoiceDetail() {
                 <th>Concepto</th>
                 <th className="num">Cantidad</th>
                 <th className="num">Precio unit.</th>
+                <th className="num">IVA</th>
                 <th className="num">Importe</th>
               </tr>
             </thead>
@@ -129,6 +130,7 @@ export function InvoiceDetail() {
                   <td>{item.description}</td>
                   <td className="num">{Number(item.quantity).toLocaleString('es-ES')}</td>
                   <td className="num">{formatMoney(item.unit_price)}</td>
+                  <td className="num">{Number(item.tax_rate).toLocaleString('es-ES')} %</td>
                   <td className="num">{formatMoney(item.amount!)}</td>
                 </tr>
               ))}
@@ -139,8 +141,23 @@ export function InvoiceDetail() {
         <dl className="totals">
           <dt>Base imponible</dt>
           <dd>{formatMoney(invoice.subtotal)}</dd>
-          <dt>IVA ({Number(invoice.tax_rate).toLocaleString('es-ES')} %)</dt>
-          <dd>{formatMoney(invoice.tax_amount)}</dd>
+          {invoice.tax_breakdown.map((line) => (
+            <Fragment key={line.rate}>
+              <dt>
+                IVA {Number(line.rate).toLocaleString('es-ES')} %
+                {invoice.tax_breakdown.length > 1 && (
+                  <span className="muted"> s/ {formatMoney(line.base)}</span>
+                )}
+              </dt>
+              <dd>{formatMoney(line.amount)}</dd>
+            </Fragment>
+          ))}
+          {Number(invoice.withholding_rate) > 0 && (
+            <>
+              <dt>Retención IRPF {Number(invoice.withholding_rate).toLocaleString('es-ES')} %</dt>
+              <dd>−{formatMoney(invoice.withholding_amount)}</dd>
+            </>
+          )}
           <dt className="grand">Total</dt>
           <dd className="grand">{formatMoney(invoice.total)}</dd>
         </dl>

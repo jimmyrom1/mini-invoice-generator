@@ -1,4 +1,4 @@
-import { emptyItem } from '../constants'
+import { VAT_RATES, emptyItem } from '../constants'
 import { formatCents, lineCents } from '../money'
 import type { InvoiceItem } from '../types'
 
@@ -22,6 +22,7 @@ export function ItemsEditor({ items, onChange, errors = {} }: Props) {
             <th>Concepto</th>
             <th className="num">Cantidad</th>
             <th className="num">Precio unit.</th>
+            <th className="num">IVA</th>
             <th className="num">Importe</th>
             <th aria-label="Acciones" />
           </tr>
@@ -61,6 +62,25 @@ export function ItemsEditor({ items, onChange, errors = {} }: Props) {
                   placeholder="0,00"
                   required
                 />
+              </td>
+              <td>
+                <select
+                  aria-label={`IVA línea ${i + 1}`}
+                  className="num"
+                  value={item.tax_rate}
+                  onChange={(e) => update(i, { tax_rate: e.target.value })}
+                  aria-invalid={!!errors[i]?.tax_rate}
+                >
+                  {/* Un borrador antiguo puede tener un tipo que ya no está en la lista. */}
+                  {(VAT_RATES.includes(item.tax_rate as (typeof VAT_RATES)[number])
+                    ? VAT_RATES
+                    : [...VAT_RATES, item.tax_rate]
+                  ).map((rate) => (
+                    <option key={rate} value={rate}>
+                      {rate} %
+                    </option>
+                  ))}
+                </select>
               </td>
               <td className="num amount">{formatCents(lineCents(item))}</td>
               <td>

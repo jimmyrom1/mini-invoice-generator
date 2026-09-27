@@ -143,27 +143,41 @@ def invoice_pdf(invoice_id: int):
 @bp.get("/stats")
 def stats():
     """Resumen para el panel: importes por estado calculados en la base de datos."""
-    # Mismo redondeo que Invoice.total: cada línea a céntimos y el IVA redondeado aparte.
+    # Mismo cálculo que Invoice.total: cada línea a céntimos, la cuota de IVA redondeada por
+    # tipo sobre su base agrupada y la retención de IRPF redondeada aparte.
     line_total = func.round(InvoiceItem.quantity * InvoiceItem.unit_price, 2)
-    subtotals = (
+    per_rate = (
         select(
-            Invoice.id,
-            Invoice.status,
-            Invoice.due_date,
-            Invoice.tax_rate,
-            func.coalesce(func.sum(line_total), 0).label("subtotal"),
+            InvoiceItem.invoice_id,
+            InvoiceItem.tax_rate,
+            func.sum(line_total).label("base"),
         )
-        .outerjoin(Invoice.items)
-        .group_by(Invoice.id)
+        .group_by(InvoiceItem.invoice_id, InvoiceItem.tax_rate)
         .subquery()
     )
-    per_invoice = select(
-        subtotals.c.status,
-        subtotals.c.due_date,
-        (
-            subtotals.c.subtotal + func.round(subtotals.c.subtotal * subtotals.c.tax_rate / 100, 2)
-        ).label("total"),
-    ).subquery()
+    per_invoice_tax = (
+        select(
+            per_rate.c.invoice_id,
+            func.sum(per_rate.c.base).label("subtotal"),
+            func.sum(func.round(per_rate.c.base * per_rate.c.tax_rate / 100, 2)).label("tax"),
+        )
+        .group_by(per_rate.c.invoice_id)
+        .subquery()
+    )
+    subtotal = func.coalesce(per_invoice_tax.c.subtotal, 0)
+    per_invoice = (
+        select(
+            Invoice.status,
+            Invoice.due_date,
+            (
+                subtotal
+                + func.coalesce(per_invoice_tax.c.tax, 0)
+                - func.round(subtotal * Invoice.withholding_rate / 100, 2)
+            ).label("total"),
+        )
+        .outerjoin(per_invoice_tax, per_invoice_tax.c.invoice_id == Invoice.id)
+        .subquery()
+    )
     rows = db.session.execute(
         select(
             per_invoice.c.status,
